@@ -1,7 +1,7 @@
-// CoffeeChat
+// CoffeeChat v1.01
 // Made by ColorProgrammy
 
-// Tested on Android 7 and Android 12 in Cxxdroid app
+// Only for Linux
 
 #include <iostream>
 #include <cstring>
@@ -55,6 +55,63 @@ std::vector<std::string> get_local_ips() {
     return ips;
 }
 
+std::string get_external_ip() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("Error creating socket for external IP");
+        return "";
+    }
+
+    // Timeout
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct hostent* server = gethostbyname("api.ipify.org");
+    if (server == NULL) {
+        close(sock);
+        return "";
+    }
+
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(80);
+    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+
+    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+        close(sock);
+        return "";
+    }
+
+    std::string request = "GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n";
+    if (send(sock, request.c_str(), request.length(), 0) < 0) {
+        close(sock);
+        return "";
+    }
+
+    char buffer[1024];
+    std::string response;
+    int bytes;
+    while ((bytes = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[bytes] = '\0';
+        response += buffer;
+    }
+
+    close(sock);
+
+    size_t body_start = response.find("\r\n\r\n");
+    if (body_start != std::string::npos) {
+        std::string ip = response.substr(body_start + 4);
+        ip.erase(ip.find_last_not_of(" \n\r\t") + 1);
+        return ip;
+    }
+
+    return "";
+}
+
 void receiver(int sock) {
     char buffer[1024];
     while (running) {
@@ -104,6 +161,16 @@ int main(int argc, char* argv[]) {
                 std::cout << "  " << ip << "\n";
             }
         }
+
+        // External IP
+        std::cout << "Detecting external IP...\n";
+        std::string external_ip = get_external_ip();
+        if (!external_ip.empty()) {
+            std::cout << "External IP: " << external_ip << std::endl;
+        } else {
+            std::cout << "External IP: Could not be determined" << std::endl;
+        }
+
         std::cout << "Waiting for connection on port " << port << "...\n";
 
         int opt = 1;
@@ -170,6 +237,7 @@ int main(int argc, char* argv[]) {
     recv_thread.detach();
 
     std::string message;
+    std::cout << "> ";
     while (running) {
         std::getline(std::cin, message);
         if (!running) break;
